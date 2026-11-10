@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ur">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#4f46e5">
+<title>AI Friend</title>
+<style>
+:root{--bg:#f5f7fb;--card:#fff;--tx:#0f172a;--mu:#64748b;--ac:#4f46e5;--ok:#16a34a;--bd:#e2e8f0}
+@media(prefers-color-scheme:dark){:root{--bg:#0b1020;--card:#151c33;--tx:#e8ecf8;--mu:#93a0c0;--ac:#818cf8;--bd:#263052}}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:calc(12px + env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom));max-width:520px;margin-inline:auto}
+h1{font-size:26px;margin:14px 0 2px}.sub{color:var(--mu);margin:0 0 8px;font-size:14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:14px;margin:12px 0}
+#mic{width:128px;height:128px;border-radius:50%;border:0;background:var(--ac);color:#fff;font-size:46px;display:block;margin:18px auto 10px}
+#mic.on{background:var(--ok);animation:p 1.4s infinite}@keyframes p{50%{transform:scale(1.07)}}
+#state,#heard{text-align:center;color:var(--mu);min-height:22px;margin:4px 0}
+#reply{font-size:18px;font-weight:600;margin:0 0 8px}
+.btn{display:block;width:100%;padding:14px;border-radius:12px;border:0;background:var(--ac);color:#fff;font-size:17px;text-align:center;text-decoration:none;font-weight:600}
+input,select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);font-size:16px;margin:4px 0}
+.row{display:flex;gap:8px}.row>*{flex:1}.row>.sm{flex:0 0 auto}
+.c{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--bd)}
+.c button{border:0;background:none;color:var(--mu);font-size:20px}
+summary{font-weight:600;cursor:pointer}ul{margin:8px 0 0;padding-left:18px;color:var(--mu);line-height:1.7}
+#cam{position:fixed;inset:0;background:#000;z-index:9;display:flex;flex-direction:column}
+#vid{flex:1;width:100%;object-fit:cover;min-height:0}
+#cam .bar{display:flex;gap:12px;padding:14px 16px calc(14px + env(safe-area-inset-bottom))}
+</style>
+</head>
+<body>
+<h1>🤝 AI Friend</h1>
+<p class="sub">Awaz se call, message, song aur camera. Mic dabayein aur bolein.</p>
+
+<button id="mic" aria-label="Sunna shuru / band">🎤</button>
+<div id="state">Mic dabayein</div>
+<div id="heard"></div>
+
+<div class="card" id="result" hidden>
+  <p id="reply"></p>
+  <a id="act" class="btn" hidden></a>
+</div>
+
+<div class="card">
+  <summary style="display:block">Likh kar bhi keh sakte hain</summary>
+  <form id="tf" class="row" style="margin-top:6px">
+    <input id="ti" placeholder="Ali ko call karo" autocomplete="off">
+    <button class="btn sm" style="width:auto">Chalao</button>
+  </form>
+</div>
+
+<details class="card" id="cdet">
+  <summary>📒 Contacts (naam aur number)</summary>
+  <p class="sub">"Ali ko call karo" tabhi chalega jab Ali yahan save ho.</p>
+  <div class="row"><input id="cn" placeholder="Naam"><input id="cp" placeholder="Number" inputmode="tel"></div>
+  <button class="btn" id="cadd" style="margin-top:6px">Save karein</button>
+  <div id="clist"></div>
+</details>
+
+<details class="card">
+  <summary>💡 Kya bol sakte hain</summary>
+  <ul>
+    <li>"Ali ko call karo"</li>
+    <li>"Ali ko message bhejo ke main late hoon"</li>
+    <li>"Atif Aslam ka song lagao"</li>
+    <li>"Camera on karo" (phir "photo khencho" / "band karo")</li>
+  </ul>
+</details>
+
+<div class="card">
+  <label class="sub" for="lang">Bolne ki zaban</label>
+  <select id="lang">
+    <option value="en-IN">Roman Urdu / Hinglish</option>
+    <option value="ur-PK">اردو</option>
+    <option value="hi-IN">हिन्दी</option>
+    <option value="en-US">English</option>
+  </select>
+  <p class="sub" style="margin-top:8px">Android Chrome mein sab se behtar chalta hai. Sunte rehne ke liye page khula aur screen on rakhein. Call/message dialer mein khulta hai, wahan ek tap se confirm karein.</p>
+</div>
+
+<div id="cam" hidden>
+  <video id="vid" autoplay playsinline muted></video>
+  <div class="bar"><button class="btn" id="snap">📸 Photo</button><button class="btn" id="cclose" style="background:#475569">Band</button></div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+let rec=null,listening=false,speaking=false,stream=null,lock=null;
+
+/* ---------- Contacts ---------- */
+let contacts={};
+try{contacts=JSON.parse(localStorage.getItem('af_contacts')||'{}')}catch(e){}
+const saveC=()=>{try{localStorage.setItem('af_contacts',JSON.stringify(contacts))}catch(e){}};
+function drawC(){
+  const box=$('clist');box.textContent='';
+  Object.keys(contacts).forEach(k=>{
+    const d=document.createElement('div');d.className='c';
+    const s=document.createElement('span');s.textContent=k+" — "+contacts[k];
+    const b=document.createElement('button');b.textContent='✕';b.setAttribute('aria-label','Hatayein');
+    b.onclick=()=>{delete contacts[k];saveC();drawC()};
+    d.append(s,b);box.append(d);
+  });
+}
+$('cadd').onclick=()=>{
+  const n=$('cn').value.trim(),p=$('cp').value.replace(/[^\d+]/g,'');
+  if(!n||p.length<4)return;
+  contacts[n]=p;saveC();drawC();$('cn').value=$('cp').value='';
+};
+function findNum(n){
+  n=n.toLowerCase();if(!n)return'';
+  for(const k in contacts){const x=k.toLowerCase();if(x===n||x.includes(n)||n.includes(x))return contacts[k]}
+  return'';
+}
+drawC();
+
+/* ---------- Samajhna (parser) ---------- */
+const W={
+  cam:/\b(camera|kamera|cam|selfie|photo|tasveer)\b|کیمرہ|कैमरा/i,
+  sms:/\b(message|msg|sms|text|massage)\b|میسج|پیغام|मैसेज|संदेश/i,
+  call:/\b(call|phone|fon|dial)\b|کال|فون|कॉल|फोन/i,
+  music:/\b(song|gana|gaana|gaane|music|play|lagao|chalao|bajao|sunao)\b|گانا|گانے|گانہ|गाना|गाने|لگاؤ/i
+};
+const KO=/(?:^|\s)(?:ko|کو|को)(?=\s|$)/g;
+const CALLW=/\b(call|phone|fon|dial|karo|kro|kar|do|dena|lagao|laga|milao|please|plz|zara|ek|to)\b|کال|فون|कॉल|फोन|کرو|کریں|करो|करें/gi;
+const MUSW=/\b(song|gana|gaana|gaane|music|play|lagao|laga|do|chalao|bajao|sunao|karo|kro|kar|ek|ka|ki|ke|please|zara|mujhe|mere|liye|for|the|a|by)\b|گانا|گانے|گانہ|गाना|गाने|لگاؤ|لگا|دو/gi;
+const CMDW=/\b(message|msg|sms|text|massage|bhejo|bhej|do|de|send|karo|kro|kar|dena|please|zara|ek|a)\b/gi;
+const LEAD=/^(?:\s*(?:message|msg|sms|text|bhejo|bhej|do|send|karo|kro|kar|dena|ek)\b\s*)+/i;
+const SEP=/^(?:(?:ke|ki|ke ki|ki ke|that|saying|likho|likh|bolo|keh)\s+)+/i;
+const enc=encodeURIComponent;
+
+function parse(raw){
+  const t=raw.trim().replace(/^(hey |hi |ok )?(friend|dost|دوست|दोस्त)[,\s]*/i,'');
+  const dig=((t.match(/\+?\d[\d\s-]{5,}\d/)||[''])[0]).replace(/[\s-]/g,'');
+
+  if(W.cam.test(t))return{a:'camera',reply:'Camera khol raha hoon'};
+
+  if(W.sms.test(t)){
+    const m=t.match(/^(.*?)\s+(?:ko|to|کو|को)\s+(.*)$/i);
+    let name,msg;
+    if(m){name=m[1].replace(CMDW,' ').replace(/\s+/g,' ').trim();msg=m[2].replace(LEAD,'').replace(SEP,'').trim()}
+    else{const w=t.replace(CMDW,' ').replace(dig,'').trim().split(/\s+/);name=w.shift()||'';msg=w.join(' ')}
+    const num=dig||findNum(name);
+    if(!num)return{a:'ask',reply:(name||'Is')+' ka number nahi mila. Contacts mein save karein.',open:true};
+    if(!msg)return{a:'ask',reply:'Message mein kya likhun?'};
+    return{a:'link',url:'sms:'+num+'?body='+enc(msg),label:'💬 Message bhejein',reply:(name||num)+' ko message tayyar hai'};
+  }
+
+  if(W.call.test(t)){
+    const name=t.replace(dig,' ').replace(KO,' ').replace(CALLW,' ').replace(/\s+/g,' ').trim();
+    const num=dig||findNum(name);
+    if(!num)return{a:'ask',reply:(name||'Is')+' ka number nahi mila. Contacts mein save karein.',open:true};
+    return{a:'link',url:'tel:'+num,label:'📞 Call karein: '+(name||num),reply:(name||num)+' ko call kar raha hoon'};
+  }
+
+  if(W.music.test(t)){
+    const q=t.replace(MUSW,' ').replace(/\s+/g,' ').trim();
+    if(!q)return{a:'ask',reply:'Kaun sa song lagaun?'};
+    return{a:'link',url:'https://www.youtube.com/results?search_query='+enc(q),label:'🎵 Song kholein: '+q,reply:q+' laga raha hoon'};
+  }
+  return null;
+}
+
+/* ---------- Kaam karna ---------- */
+function run(raw,spoken){
+  if(stream){
+    if(/photo|snap|click|capture|khen?cho|kheench|tasveer|تصویر/i.test(raw)){snap();return say('Photo kheench li')}
+    if(/band|close|bandh|بند|बंद/i.test(raw)){closeCam();return say('Camera band')}
+  }
+  const c=parse(raw);
+  if(!c){if(!spoken)say('Samajh nahi aya, dobara boliye');return}
+  $('result').hidden=false;$('act').hidden=true;
+  if(c.a==='camera'){say(c.reply);openCam();return}
+  if(c.a==='ask'){say(c.reply);if(c.open)$('cdet').open=true;return}
+  say(c.reply);
+  const a=$('act');a.href=c.url;a.textContent=c.label;a.hidden=false;
+  setTimeout(()=>{location.href=c.url},1100);
+}
+
+async function openCam(){
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    $('vid').srcObject=stream;$('cam').hidden=false;
+  }catch(e){say('Camera ki ijazat nahi mili')}
+}
+function closeCam(){if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;$('cam').hidden=true}
+function snap(){
+  const v=$('vid');if(!v.videoWidth)return;
+  const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;
+  c.getContext('2d').drawImage(v,0,0);
+  const a=document.createElement('a');a.href=c.toDataURL('image/jpeg',.92);a.download='photo-'+Date.now()+'.jpg';a.click();
+}
+$('snap').onclick=snap;$('cclose').onclick=closeCam;
+
+/* ---------- Bolna ---------- */
+function say(t){
+  $('result').hidden=false;$('reply').textContent=t;
+  if(!('speechSynthesis' in window))return;
+  speaking=true;try{rec&&rec.abort()}catch(e){}
+  const u=new SpeechSynthesisUtterance(t);u.lang='en-IN';
+  u.onend=u.onerror=()=>{speaking=false;next()};
+  speechSynthesis.cancel();speechSynthesis.speak(u);
+}
+
+/* ---------- Sunna ---------- */
+function ui(){
+  $('mic').classList.toggle('on',listening);
+  $('state').textContent=listening?'Sun raha hoon... bolein':'Mic dabayein';
+}
+function next(){
+  if(!listening||speaking)return;
+  if(rec){rec.onend=rec.onresult=rec.onerror=null;try{rec.abort()}catch(e){}}
+  try{
+    rec=new SR();rec.lang=$('lang').value;rec.interimResults=false;rec.maxAlternatives=1;
+    rec.onresult=e=>{const t=e.results[0][0].transcript;$('heard').textContent='“'+t+'”';run(t,true)};
+    rec.onerror=e=>{if(e.error==='not-allowed'||e.error==='service-not-allowed'){listening=false;ui();say('Mic ki ijazat dein')}};
+    rec.onend=()=>{if(listening&&!speaking)setTimeout(next,300)};
+    rec.start();
+  }catch(e){setTimeout(next,800)}
+}
+async function wl(){try{lock=await navigator.wakeLock.request('screen')}catch(e){}}
+function start(){
+  if(!SR){say('Is browser mein awaz support nahi. Android Chrome mein kholein, ya upar likh kar command dein.');return}
+  listening=true;ui();wl();next();
+}
+function stop(){
+  listening=false;
+  if(rec){rec.onend=rec.onresult=rec.onerror=null;try{rec.abort()}catch(e){}}
+  try{lock&&lock.release()}catch(e){}
+  ui();
+}
+$('mic').onclick=()=>listening?stop():start();
+$('tf').onsubmit=e=>{e.preventDefault();const v=$('ti').value.trim();if(v){$('heard').textContent='“'+v+'”';run(v,false);$('ti').value=''}};
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&listening){wl();next()}});
+try{const l=localStorage.getItem('af_lang');if(l)$('lang').value=l}catch(e){}
+$('lang').onchange=()=>{try{localStorage.setItem('af_lang',$('lang').value)}catch(e){}if(listening)next()};
+ui();
+</script>
+</body>
+</html>
